@@ -2,7 +2,9 @@ import hashlib
 import os
 import random
 import re
+import secrets
 import smtplib
+import time
 from datetime import datetime
 from email.message import EmailMessage
 from functools import wraps
@@ -17,7 +19,7 @@ DB_USER = os.getenv("MOVIE_DB_USER", "root")
 DB_PASSWORD = os.getenv("MOVIE_DB_PASSWORD", "srinath")
 DB_NAME = "movie_booking_db"
 
-EMAIL_ADDRESS = os.getenv("MOVIE_EMAIL_ADDRESS", "srinaath25@gmail.com")
+EMAIL_ADDRESS = os.getenv("MOVIE_EMAIL_ADDRESS", "")
 EMAIL_APP_PASSWORD = os.getenv("MOVIE_EMAIL_APP_PASSWORD", "come znel zwlk eqnc")
 SMTP_SERVER = os.getenv("MOVIE_SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("MOVIE_SMTP_PORT", "587"))
@@ -91,7 +93,72 @@ def is_valid_email(email):
 
 
 def make_otp():
-    return str(random.randint(100000, 999999))
+    """Create a cryptographically stronger 6-digit OTP."""
+    return str(secrets.randbelow(900000) + 100000)
+
+
+def normalize_card_number(value):
+    return re.sub(r"\D", "", value or "")
+
+
+def luhn_valid(card_number):
+    """Validate the card checksum without storing the card number."""
+    digits = normalize_card_number(card_number)
+    if not 13 <= len(digits) <= 19:
+        return False
+    total = 0
+    parity = len(digits) % 2
+    for index, char in enumerate(digits):
+        digit = int(char)
+        if index % 2 == parity:
+            digit *= 2
+            if digit > 9:
+                digit -= 9
+        total += digit
+    return total % 10 == 0
+
+
+def card_brand(card_number):
+    """Return a common card network when the number matches its prefix/length."""
+    digits = normalize_card_number(card_number)
+    length = len(digits)
+    if re.match(r"^4", digits) and length in (13, 16, 19):
+        return "Visa"
+    if (re.match(r"^(5[1-5])", digits) or
+            re.match(r"^(22[2-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)", digits)) and length == 16:
+        return "Mastercard"
+    if re.match(r"^3[47]", digits) and length == 15:
+        return "American Express"
+    if (re.match(r"^(6011|65|64[4-9])", digits) and 16 <= length <= 19):
+        return "Discover"
+    if re.match(r"^(60|65|81|82|508)", digits) and 16 <= length <= 19:
+        return "RuPay"
+    return None
+
+
+def validate_card(card_number, expiry, cvv):
+    digits = normalize_card_number(card_number)
+    brand = card_brand(digits)
+    if not brand or not luhn_valid(digits):
+        return False, "Enter a valid card number for a supported card network."
+    if not re.fullmatch(r"(0[1-9]|1[0-2])\s*/\s*([0-9]{2}|[0-9]{4})", expiry or ""):
+        return False, "Enter expiry in MM/YY format."
+    month, year = [part.strip() for part in expiry.split("/")]
+    year_num = int(year) + (2000 if len(year) == 2 else 0)
+    now = datetime.now()
+    if year_num < now.year or (year_num == now.year and int(month) < now.month):
+        return False, "The card expiry date has passed."
+    cvv_pattern = r"\d{4}" if brand == "American Express" else r"\d{3}"
+    if not re.fullmatch(cvv_pattern, cvv or ""):
+        return False, "Enter a valid security code for the selected card."
+    return True, brand
+
+
+def validate_upi(upi_id):
+    value = (upi_id or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,255}@[a-z][a-z0-9.-]{1,63}", value):
+        return False
+    return True
 
 
 def send_email(to_email, subject, body):
@@ -146,19 +213,12 @@ def release_held_seats():
     if user and show_id and seats:
         placeholders = ",".join(["%s"] * len(seats))
         run_query(
-            f"UPDATE seats SET status='free', booked_by=NULL, held_at=NULL "
+            f"UPDATE seats SET status='free', booked_by=NULL "
             f"WHERE show_id=%s AND seat_no IN ({placeholders}) "
             f"AND status='held' AND booked_by=%s",
             tuple([show_id] + seats + [user["id"]]),
         )
     session["selected_seats"] = []
-
-
-def cleanup_expired_holds():
-    try:
-        run_query("UPDATE seats SET status='free', booked_by=NULL, held_at=NULL WHERE status='held' AND held_at < NOW() - INTERVAL 10 MINUTE")
-    except Exception as exc:
-        app.logger.error("Failed to clean up expired seats: %s", exc)
 
 
 def selected_movie():
@@ -324,7 +384,6 @@ def shows(movie_id):
     movie = fetch_one("SELECT * FROM movies WHERE id=%s", (movie_id,))
     if not movie:
         return redirect(url_for("home"))
-    cleanup_expired_holds()
     release_held_seats()
     session["selected_movie_id"] = movie_id
     rows = fetch_all("""
@@ -347,7 +406,6 @@ def shows(movie_id):
 def seats(show_id):
     if session.get("selected_show_id") and session.get("selected_show_id") != show_id:
         release_held_seats()
-    cleanup_expired_holds()
     show = fetch_one("""
         SELECT shows.*, cinemas.name AS cinema_name, locations.name AS location_name
         FROM shows
@@ -385,25 +443,18 @@ def hold_seats():
     cursor = db.cursor()
     try:
         for seat_no in selected:
-            cursor.execute("SELECT status, booked_by FROM seats WHERE show_id=%s AND seat_no=%s", (show_id, seat_no))
-            seat_row = cursor.fetchone()
-            if not seat_row:
-                conflict_seats.append(seat_no)
-                continue
-            
-            status, booked_by = seat_row[0], seat_row[1]
-            if status == 'free' or (status == 'held' and booked_by == user["id"]):
-                cursor.execute(
-                    "UPDATE seats SET status='held', booked_by=%s, held_at=CURRENT_TIMESTAMP WHERE show_id=%s AND seat_no=%s",
-                    (user["id"], show_id, seat_no),
-                )
+            cursor.execute(
+                "UPDATE seats SET status='held', booked_by=%s WHERE show_id=%s AND seat_no=%s AND status='free'",
+                (user["id"], show_id, seat_no),
+            )
+            if cursor.rowcount == 1:
                 successfully_held.append(seat_no)
             else:
                 conflict_seats.append(seat_no)
         if conflict_seats and successfully_held:
             ph = ",".join(["%s"] * len(successfully_held))
             cursor.execute(
-                f"UPDATE seats SET status='free', booked_by=NULL, held_at=NULL WHERE show_id=%s AND seat_no IN ({ph}) AND booked_by=%s",
+                f"UPDATE seats SET status='free', booked_by=NULL WHERE show_id=%s AND seat_no IN ({ph}) AND booked_by=%s",
                 tuple([show_id] + successfully_held + [user["id"]]),
             )
         db.commit()
@@ -466,72 +517,147 @@ def snack_summary():
 def payment():
     if not session.get("selected_show_id") or not session.get("selected_seats"):
         return redirect(url_for("home"))
-    return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), bypass=bool(current_user().get("bypass")))
+    return render_template(
+        "payment.html",
+        movie=selected_movie(),
+        show=selected_show(),
+        total=calculate_total(),
+        snack_summary=snack_summary(),
+        otp_sent=False,
+        selected_method=session.get("payment_method", "card"),
+    )
 
 
 @app.post("/payment/otp")
 @user_required
 def payment_otp():
-    if current_user().get("bypass"):
-        return confirm_booking()
+    # A resend uses the already verified payment method/reference and does not
+    # ask the browser to send card details again.
+    resend = request.form.get("resend") == "1"
+    if resend and session.get("payment_method") in {"card", "upi"} and session.get("payment_reference"):
+        method = session["payment_method"]
+        reference = session["payment_reference"]
+        movie = selected_movie()
+        show = selected_show()
+        total = calculate_total()
+        return _send_payment_otp(method, reference, movie, show, total)
+
+    method = request.form.get("payment_method", "").strip().lower()
+    card_number = request.form.get("card_number", "").strip()
+    card_expiry = request.form.get("card_expiry", "").strip()
+    card_cvv = request.form.get("card_cvv", "").strip()
+    upi_id = request.form.get("upi_id", "").strip().lower()
+
+    if method not in {"card", "upi"}:
+        error = "Choose Card or UPI to continue."
+    elif method == "card":
+        valid, result = validate_card(card_number, card_expiry, card_cvv)
+        error = None if valid else result
+    else:
+        error = None if validate_upi(upi_id) else "Enter a valid UPI ID, for example name@provider."
+
+    movie = selected_movie()
+    show = selected_show()
+    total = calculate_total()
+    common = dict(
+        movie=movie, show=show, total=total, snack_summary=snack_summary(),
+        selected_method=method or "card", otp_sent=False,
+    )
+    if error:
+        return render_template("payment.html", error=error, **common)
+
+    # Never store full card numbers, CVV, or the full UPI ID in the session/database.
+    session["payment_method"] = method
+    if method == "card":
+        digits = normalize_card_number(card_number)
+        session["payment_reference"] = f"{card_brand(digits)} ending {digits[-4:]}"
+    else:
+        local, provider = upi_id.split("@", 1)
+        masked = (local[:2] + "••••" + local[-1:]) if len(local) > 3 else "••••"
+        session["payment_reference"] = masked + "@" + provider
+
+    return _send_payment_otp(method, session["payment_reference"], movie, show, total)
+
+
+def _send_payment_otp(method, reference, movie, show, total):
     otp = make_otp()
     session["payment_otp"] = otp
+    session["payment_otp_expires"] = time.time() + 600
     email = current_user()["email"]
-    total = calculate_total()
-    movie = selected_movie()
-    message = f"Your payment confirmation OTP is: {otp}\nMovie: {movie['title']}\nSeats: {', '.join(session.get('selected_seats', []))}\nTotal: Rs.{total}"
-    if not send_email(email, "Payment OTP and Ticket Details", message):
-        return render_template("payment.html", movie=movie, show=selected_show(), total=total, snack_summary=snack_summary(), bypass=False, error="Could not send payment OTP. Check server email settings.")
-    return render_template("payment.html", movie=movie, show=selected_show(), total=total, snack_summary=snack_summary(), bypass=False, otp_sent=True)
+    message = (
+        f"Your Movie Booking payment verification OTP is: {otp}\n\n"
+        f"Payment method: {method.upper()}\n"
+        f"Reference: {reference}\n"
+        f"Movie: {movie['title']}\n"
+        f"Seats: {', '.join(session.get('selected_seats', []))}\n"
+        f"Total: Rs.{total}\n\n"
+        "This OTP expires in 10 minutes. Do not share it with anyone."
+    )
+    if not send_email(email, "Movie Booking Payment Verification OTP", message):
+        session.pop("payment_otp", None)
+        session.pop("payment_otp_expires", None)
+        return render_template(
+            "payment.html", movie=movie, show=show, total=total,
+            snack_summary=snack_summary(), selected_method=method, otp_sent=False,
+            error="Could not send the payment OTP. Check the server email settings."
+        )
+    return render_template(
+        "payment.html", movie=movie, show=show, total=total,
+        snack_summary=snack_summary(), selected_method=method, otp_sent=True,
+        payment_reference=reference
+    )
 
 
 @app.post("/payment/confirm")
 @user_required
 def confirm_booking():
     user = current_user()
-    if not user.get("bypass") and request.form.get("otp", "").strip() != session.get("payment_otp"):
-        return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), bypass=False, otp_sent=True, error="Payment OTP is incorrect.")
+    entered_otp = request.form.get("otp", "").strip()
+    expected_otp = session.get("payment_otp")
+    expires = session.get("payment_otp_expires", 0)
+    method = session.get("payment_method")
+    reference = session.get("payment_reference")
+
+    if method not in {"card", "upi"} or not reference:
+        return render_template(
+            "payment.html", movie=selected_movie(), show=selected_show(),
+            total=calculate_total(), snack_summary=snack_summary(),
+            selected_method="card", error="Payment details were not verified. Please restart payment.",
+        )
+    if not expected_otp or time.time() > float(expires) or entered_otp != expected_otp:
+        return render_template(
+            "payment.html", movie=selected_movie(), show=selected_show(),
+            total=calculate_total(), snack_summary=snack_summary(),
+            selected_method=method, otp_sent=True, payment_reference=reference,
+            error="The payment OTP is invalid or expired. Request a new OTP.",
+        )
 
     show_id = session.get("selected_show_id")
     selected = session.get("selected_seats", [])
     seat_status = fetch_all("SELECT seat_no, status, booked_by FROM seats WHERE show_id=%s", (show_id,))
     available_seats = sum(1 for s in seat_status if s["status"] == "free" or (s["status"] == "held" and s.get("booked_by") == user["id"]))
     if len(selected) > available_seats:
-        return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), bypass=bool(user.get("bypass")), error="Not enough seats are currently available.")
+        return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), selected_method=method, otp_sent=True, payment_reference=reference, error="Not enough seats are currently available.")
 
     ph = ",".join(["%s"] * len(selected))
     current_seats = fetch_all(f"SELECT seat_no, status, booked_by FROM seats WHERE show_id=%s AND seat_no IN ({ph})", tuple([show_id] + selected))
     for seat in current_seats:
         is_mine = seat["status"] == "held" and seat.get("booked_by") == user["id"]
         if seat["status"] != "free" and not is_mine:
-            return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), bypass=bool(user.get("bypass")), error=f"Seat {seat['seat_no']} is no longer available.")
+            return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=calculate_total(), snack_summary=snack_summary(), selected_method=method, otp_sent=True, payment_reference=reference, error=f"Seat {seat['seat_no']} is no longer available.")
 
     total = calculate_total()
     snack_text = snack_summary()
+    booking_id = run_query("""
+        INSERT INTO bookings (user_id, show_id, seats_text, snacks_text, total_amount)
+        VALUES (%s,%s,%s,%s,%s)
+    """, (user["id"], show_id, ", ".join(selected), snack_text, total))
 
-    db = connect_db()
-    cursor = db.cursor()
-    try:
-        cursor.execute("""
-            INSERT INTO bookings (user_id, show_id, seats_text, snacks_text, total_amount)
-            VALUES (%s,%s,%s,%s,%s)
-        """, (user["id"], show_id, ", ".join(selected), snack_text, total))
-        booking_id = cursor.lastrowid
-
-        for seat_no in selected:
-            cursor.execute("""
-                UPDATE seats SET status='booked', booked_by=%s, booking_id=%s
-                WHERE show_id=%s AND seat_no=%s
-            """, (user["id"], booking_id, show_id, seat_no))
-
-        db.commit()
-    except Exception:
-        db.rollback()
-        app.logger.exception("Booking transaction failed for user_id=%s, show_id=%s, seats=%s", user["id"], show_id, selected)
-        return render_template("payment.html", movie=selected_movie(), show=selected_show(), total=total, snack_summary=snack_text, bypass=bool(user.get("bypass")), error="Booking failed due to a server error. Please try again.")
-    finally:
-        cursor.close()
-        db.close()
+    for seat_no in selected:
+        run_query("""
+            UPDATE seats SET status='booked', booked_by=%s, booking_id=%s
+            WHERE show_id=%s AND seat_no=%s
+        """, (user["id"], booking_id, show_id, seat_no))
 
     show = selected_show()
     movie = selected_movie()
@@ -550,6 +676,9 @@ def confirm_booking():
     session["selected_seats"] = []
     session["selected_snacks"] = {}
     session.pop("payment_otp", None)
+    session.pop("payment_otp_expires", None)
+    session.pop("payment_method", None)
+    session.pop("payment_reference", None)
     return render_template("ticket.html", booking_id=booking_id, movie=movie, show=show, seats=selected, snack_summary=snack_text, total=total, email_sent=email_sent)
 
 
@@ -624,41 +753,10 @@ def admin_new_movie():
     if not title:
         return render_template("admin.html", section="new_movie", error="Please enter the movie title.", categories=MOVIE_CATEGORIES, statuses=MOVIE_DATE_STATUSES, badges=MOVIE_BADGES)
     try:
-        db = connect_db()
-        cursor = db.cursor()
-        try:
-            cursor.execute("""
-                INSERT INTO movies (title, badge, category, movie_cast, synopsis, length_minutes, rating, release_year, trailer_link, date_status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (title, badge, category, cast, synopsis, length_val, rating, year_val, trailer, date_status))
-            movie_id = cursor.lastrowid
-
-            # Auto-generate shows across all cinemas for the new movie
-            cursor.execute("SELECT id FROM cinemas")
-            cinemas = cursor.fetchall()
-            for cinema in cinemas:
-                cursor.execute("""
-                    INSERT INTO shows (movie_id, cinema_id, show_date, show_time, price)
-                    VALUES (%s, %s, CURDATE() + INTERVAL 1 DAY, '18:30', 250)
-                """, (movie_id, cinema[0]))
-                show_id = cursor.lastrowid
-
-                # Auto-generate 48 seats (A-F rows, 1-8 columns) for each show
-                for letter in "ABCDEF":
-                    for number in range(1, 9):
-                        seat_no = letter + str(number)
-                        cursor.execute("""
-                            INSERT IGNORE INTO seats (show_id, seat_no, status)
-                            VALUES (%s, %s, 'free')
-                        """, (show_id, seat_no))
-
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            cursor.close()
-            db.close()
+        run_query("""
+            INSERT INTO movies (title, badge, category, movie_cast, synopsis, length_minutes, rating, release_year, trailer_link, date_status)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (title, badge, category, cast, synopsis, length_val, rating, year_val, trailer, date_status))
         return redirect(url_for("admin_dashboard"))
     except Exception as exc:
         return render_template("admin.html", section="new_movie", error="Could not save movie: " + str(exc), categories=MOVIE_CATEGORIES, statuses=MOVIE_DATE_STATUSES, badges=MOVIE_BADGES)
@@ -669,9 +767,8 @@ def admin_new_movie():
 def admin_edit_movie():
     movies = fetch_all("SELECT * FROM movies ORDER BY id")
     movie_id = request.args.get("id", type=int)
-    error = request.args.get("error")
     selected = next((m for m in movies if m["id"] == movie_id), movies[0] if movies else None)
-    return render_template("admin.html", section="edit_movie", movies=movies, movie=selected, error=error, categories=MOVIE_CATEGORIES, statuses=MOVIE_DATE_STATUSES, badges=MOVIE_BADGES)
+    return render_template("admin.html", section="edit_movie", movies=movies, movie=selected, categories=MOVIE_CATEGORIES, statuses=MOVIE_DATE_STATUSES, badges=MOVIE_BADGES)
 
 
 @app.post("/admin/movies/edit")
@@ -718,9 +815,9 @@ def admin_delete_movie():
             cursor.execute("DELETE FROM shows WHERE movie_id=%s", (movie_id,))
             cursor.execute("DELETE FROM movies WHERE id=%s", (movie_id,))
             db.commit()
-        except Exception as exc:
+        except Exception:
             db.rollback()
-            return render_template("admin.html", section="delete_movie", movies=movies, error="Could not delete movie: " + str(exc))
+            raise
         finally:
             cursor.close()
             db.close()
@@ -778,4 +875,6 @@ def admin_support():
 
 
 if __name__ == "__main__":
+    # No CREATE DATABASE, ALTER TABLE, seat reset, or seed operation is executed.
+    # The existing movie_booking_db schema/data are treated as authoritative.
     app.run(host="127.0.0.1", port=int(os.getenv("MOVIE_PORT", "5000")), debug=False)
