@@ -1,0 +1,9 @@
+{% extends 'base.html' %}{% block content %}
+<section class="auth-layout">
+  <div class="auth-atmosphere"><div class="eyebrow"><span></span> SECURE CINEMA ACCESS</div><h1>{{ heading }}</h1><p>{{ subheading }}</p><div class="auth-line"></div><small>Authentication stays server-side. Your database never talks to the browser.</small></div>
+  <div class="glass-panel auth-panel reveal">
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    {% block form %}{% endblock %}
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends 'auth.html' %}{% set heading='Welcome back.' %}{% set subheading='Pick up where your next cinema night begins.' %}
+{% block form %}
+<h2>Viewer sign in</h2><p class="muted">Credentials first. OTP second. Humanity survives another login form.</p>
+<form method="post" class="form-grid">
+  <label>Email address<input name="email" type="email" value="{{ email or '' }}" autocomplete="email" required></label>
+  <label>Password<div class="password-wrap"><input name="password" type="password" autocomplete="current-password" required><button type="button" class="reveal-pass"><i data-lucide="eye"></i></button></div></label>
+  <label>Security check<span class="captcha">{{ captcha_a }} + {{ captcha_b }} =</span><input name="captcha" inputmode="numeric" required></label>
+  <button class="primary-btn magnetic" type="submit">Send OTP / Sign in <i data-lucide="arrow-right"></i></button>
+</form>
+{% if otp_pending %}<form method="post" action="{{ url_for('verify_login_otp') }}" class="otp-panel"><label>Verification OTP<input name="otp" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></label><button class="secondary-btn" type="submit">Verify OTP & continue</button></form>{% endif %}
+<div class="auth-links"><a href="{{ url_for('register') }}">Create new account</a><a href="{{ url_for('admin_login') }}">Administrator sign in</a></div>
+{% endblock %}

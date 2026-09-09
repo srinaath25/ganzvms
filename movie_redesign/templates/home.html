@@ -1,0 +1,11 @@
+{% extends 'base.html' %}{% block title %}Discover | Theatre Before The Theatre{% endblock %}
+{% block content %}
+<section class="section-head reveal"><div><div class="eyebrow"><span></span> DISCOVER</div><h1>Choose your <em>next screen.</em></h1><p>Live catalog data, filtered by the status and category already stored in your cinema database.</p></div><div class="mode-actions"><button class="chip active" data-filter="All">All</button><button class="chip" data-filter="Now Showing">Now showing</button><button class="chip" data-filter="Pre-booking">Pre-booking</button><button class="chip" data-filter="Upcoming">Upcoming</button><button class="chip" data-filter="Trends">Trends</button><button class="icon-btn" data-cinema-mode title="Cinema mode"><i data-lucide="maximize"></i></button></div></section>
+<section class="movie-grid" id="movie-grid">
+{% for movie in movies %}<article class="movie-card tilt-card reveal" data-category="{{ movie.category|lower }}" data-status="{{ (movie.date_status or '')|lower }}" data-badge="{{ (movie.badge or '')|lower }}" data-id="{{ movie.id }}">
+  <div class="poster-void"><div class="poster-glow"></div><span>{{ movie.category }}</span>{% if movie.badge and movie.badge|lower != 'none' %}<b>{{ movie.badge }}</b>{% endif %}</div>
+  <div class="movie-card-body"><div class="kicker">{{ movie.date_status }}</div><h2>{{ movie.title }}</h2><p>{{ movie.synopsis }}</p><div class="movie-meta"><span>{{ movie.length_minutes }} min</span><span>{{ movie.rating }}</span><span>{{ movie.release_year }}</span></div><div class="card-actions"><a class="secondary-btn" href="{{ url_for('movie_details', movie_id=movie.id) }}">Details</a><a class="primary-btn" href="{{ url_for('shows', movie_id=movie.id) }}">Book ticket</a></div></div>
+</article>{% else %}<div class="empty-state"><i data-lucide="film"></i><h2>No movies found.</h2><p>The database is currently giving us the cinematic equivalent of an empty fridge.</p></div>{% endfor %}
+</section>
+{% endblock %}
+{% block scripts %}<script>window.MOVIE_FILTERS_READY=true;</script>{% endblock %}

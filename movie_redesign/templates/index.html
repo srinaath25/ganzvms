@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block title %}Movie Booking Service | Theatre Before The Theatre{% endblock %}
+{% block content %}
+<section class="hero landing">
+  <div class="hero-copy reveal">
+    <div class="eyebrow"><span></span> THEATRE BEFORE THE THEATRE</div>
+    <h1>Enter the movie<br><em>before the movie.</em></h1>
+    <p>A cinematic booking experience built around discovery, atmosphere and a seat that is actually yours.</p>
+    <div class="hero-actions"><a class="primary-btn magnetic" href="{{ url_for('login') }}"><i data-lucide="play"></i> Enter as viewer</a><a class="secondary-btn magnetic" href="{{ url_for('admin_login') }}"><i data-lucide="shield"></i> Cinema operations</a></div>
+  </div>
+  <div class="hero-orbit reveal delay-1"><div class="orbit-card"><div class="orbit-ring"></div><div class="orbit-core">SCREEN<br><small>YOUR NIGHT STARTS HERE</small></div></div></div>
+</section>
+<section class="feature-strip reveal delay-2">
+  <div><span>01</span><strong>DISCOVER</strong><small>Real catalog data</small></div><div><span>02</span><strong>ENTER</strong><small>Shows and seats</small></div><div><span>03</span><strong>SELECT</strong><small>Live availability</small></div><div><span>04</span><strong>MATERIALIZE</strong><small>Digital ticket</small></div>
+</section>
+{% endblock %}
