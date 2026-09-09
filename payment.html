@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% block title %}Payment | {{ movie.title }}{% endblock %}
+
+{% block content %}
+<section class="checkout payment-page reveal">
+  <div class="checkout-main">
+    <div class="eyebrow"><span></span> SECURE CHECKOUT</div>
+    <h1>Choose how to <em>pay.</em></h1>
+
+    <div class="payment-security glass-panel">
+      <i data-lucide="shield-check"></i>
+      <div>
+        <strong>Payment verification is required</strong>
+        <p>We verify your payment details and send a one-time OTP to your registered email before the ticket is confirmed.</p>
+      </div>
+    </div>
+
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+
+    <form method="post" action="{{ url_for('payment_otp') }}" id="payment-form" class="payment-form" novalidate>
+      <div class="payment-methods" role="radiogroup" aria-label="Payment method">
+        <label class="payment-method {% if selected_method == 'card' %}active{% endif %}">
+          <input type="radio" name="payment_method" value="card" {% if selected_method == 'card' %}checked{% endif %}>
+          <span class="method-icon"><i data-lucide="credit-card"></i></span>
+          <span class="method-copy"><strong>Card</strong><small>Credit or debit card</small></span>
+          <i class="method-check" data-lucide="check-circle-2"></i>
+        </label>
+
+        <label class="payment-method {% if selected_method == 'upi' %}active{% endif %}">
+          <input type="radio" name="payment_method" value="upi" {% if selected_method == 'upi' %}checked{% endif %}>
+          <span class="method-icon"><i data-lucide="smartphone"></i></span>
+          <span class="method-copy"><strong>UPI</strong><small>Pay using your UPI ID</small></span>
+          <i class="method-check" data-lucide="check-circle-2"></i>
+        </label>
+      </div>
+
+      <div class="payment-panel" data-payment-panel="card" {% if selected_method != 'card' %}hidden{% endif %}>
+        <div class="panel-heading">
+          <div><small>CARD PAYMENT</small><h2>Card details</h2></div>
+          <div class="network-pills"><span>VISA</span><span>MC</span><span>AMEX</span><span>RuPay</span></div>
+        </div>
+        <div class="field-grid">
+          <label class="field full">Card number
+            <input id="card-number" name="card_number" type="text" inputmode="numeric" autocomplete="cc-number" placeholder="1234 5678 9012 3456" maxlength="23">
+            <small id="card-status" class="field-hint">Card number is checked with a checksum and supported network prefix.</small>
+          </label>
+          <label class="field">Expiry
+            <input id="card-expiry" name="card_expiry" type="text" inputmode="numeric" autocomplete="cc-exp" placeholder="MM/YY" maxlength="5">
+          </label>
+          <label class="field">Security code
+            <input id="card-cvv" name="card_cvv" type="password" inputmode="numeric" autocomplete="cc-csc" placeholder="CVV" maxlength="4">
+          </label>
+        </div>
+        <p class="payment-note"><i data-lucide="lock-keyhole"></i> Full card number and CVV are never saved in the database or session.</p>
+      </div>
+
+      <div class="payment-panel" data-payment-panel="upi" {% if selected_method != 'upi' %}hidden{% endif %}>
+        <div class="panel-heading">
+          <div><small>UPI PAYMENT</small><h2>UPI ID</h2></div>
+          <span class="upi-mark">UPI</span>
+        </div>
+        <label class="field full">Your UPI ID
+          <input id="upi-id" name="upi_id" type="text" inputmode="email" autocomplete="off" placeholder="yourname@provider" maxlength="320">
+          <small class="field-hint">Enter the UPI ID associated with the account you will use for payment.</small>
+        </label>
+        <p class="payment-note"><i data-lucide="mail-check"></i> An OTP will be sent to your registered movie-booking email for verification.</p>
+      </div>
+
+      <button class="primary-btn magnetic payment-submit" type="submit">
+        Verify payment & send OTP <i data-lucide="arrow-right"></i>
+      </button>
+    </form>
+
+    {% if otp_sent %}
+      <div class="otp-verification glass-panel">
+        <div class="otp-icon"><i data-lucide="mail-check"></i></div>
+        <div class="otp-copy">
+          <small>OTP SENT</small>
+          <h2>Check your email</h2>
+          <p>A 6-digit payment verification code was sent to your registered email{% if payment_reference %}. Payment reference: <strong>{{ payment_reference }}</strong>{% endif %}.</p>
+        </div>
+        <form method="post" action="{{ url_for('confirm_booking') }}" class="otp-form">
+          <label class="field full">Payment OTP
+            <input name="otp" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="000000" required autofocus>
+          </label>
+          <button class="primary-btn" type="submit">Verify OTP & confirm ticket <i data-lucide="check"></i></button>
+        </form>
+        <p class="otp-expiry"><i data-lucide="timer"></i> The OTP expires after 10 minutes.</p>
+        <form method="post" action="{{ url_for('payment_otp') }}" class="resend-form">
+          <input type="hidden" name="resend" value="1">
+          <button class="secondary-btn" type="submit">Send a new OTP</button>
+        </form>
+      </div>
+    {% endif %}
+
+    <div class="checkout-summary-line">
+      <div><small>MOVIE</small><strong>{{ movie.title }}</strong><span>{{ show.cinema_name }} · {{ show.location_name }}</span></div>
+      <div><small>SHOW</small><strong>{{ show.show_date }}</strong><span>{{ show.show_time }}</span></div>
+      <div><small>SEATS</small><strong>{{ session.get('selected_seats')|join(', ') }}</strong><span>{{ snack_summary }}</span></div>
+    </div>
+  </div>
+
+  <aside class="total-card glass-panel">
+    <small>TOTAL</small>
+    <strong>Rs. {{ total }}</strong>
+    <span>Final amount calculated from your selected seats and the existing snack prices.</span>
+    <div class="total-lock"><i data-lucide="shield-check"></i><span>OTP protected</span></div>
+  </aside>
+</section>
+{% endblock %}
