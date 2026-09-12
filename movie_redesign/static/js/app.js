@@ -73,4 +73,16 @@
     const update=()=>{const chosen=seats.filter(s=>s.checked); count.textContent=chosen.length; const xs=chosen.map(s=>Number(s.value.slice(1))); const avg=xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:4.5; view.textContent=avg<3.2?'LEFT':avg>5.8?'RIGHT':'CENTER';};
     seats.forEach(input=>input.addEventListener('change',()=>{input.closest('.seat').classList.toggle('seat-selected',input.checked);update()})); update();
   }
+  const paymentRadios = document.querySelectorAll('input[name="payment_method"]');
+  if (paymentRadios.length > 0) {
+    paymentRadios.forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        document.querySelectorAll('.payment-method').forEach(l => l.classList.remove('active'));
+        e.target.closest('.payment-method').classList.add('active');
+        document.querySelectorAll('.payment-panel').forEach(p => p.hidden = true);
+        const activePanel = document.querySelector(`[data-payment-panel="${e.target.value}"]`);
+        if (activePanel) activePanel.hidden = false;
+      });
+    });
+  }
 })();
