@@ -20,7 +20,7 @@ DB_PASSWORD = os.getenv("MOVIE_DB_PASSWORD", "srinath")
 DB_NAME = "movie_booking_db"
 
 EMAIL_ADDRESS = os.getenv("MOVIE_EMAIL_ADDRESS", "srinaath25@gmail.com")
-EMAIL_APP_PASSWORD = os.getenv("MOVIE_EMAIL_APP_PASSWORD", "come znel zwlk eqnc")
+EMAIL_APP_PASSWORD = os.getenv("MOVIE_EMAIL_APP_PASSWORD", "")
 SMTP_SERVER = os.getenv("MOVIE_SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("MOVIE_SMTP_PORT", "587"))
 
